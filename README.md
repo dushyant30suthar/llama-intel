@@ -38,7 +38,7 @@ model.
 |-----------|------|
 | CPU | Intel Core Ultra 7 255H (16 threads) |
 | GPU | Intel Arc Graphics (Arrow Lake-P, Xe-LPG+, integrated) |
-| RAM | 32 GB DDR5 (shared with GPU) |
+| RAM | 32 GB LPDDR5x-8400 (~134 GB/s, shared with GPU) |
 | OS | Fedora 43, kernel 6.18+ (xe driver) |
 
 ## Prerequisites
@@ -157,13 +157,14 @@ directly or edit `bin/llama-serve`.
 
 ### Why iGPU is slow on large prompts
 
-The iGPU shares DDR5 with the CPU. Memory bandwidth is ~60-80 GB/s. For each
-prompt token, the GPU must read the entire model weights. A 7B Q4_K_M model is
-~4.5 GB, so:
+The iGPU shares LPDDR5x-8400 with the CPU. Max memory bandwidth is ~134 GB/s,
+but effective bandwidth is lower due to CPU contention and access patterns. For
+each prompt token, the GPU must read the entire model weights. A 7B Q4_K_M
+model is ~4.5 GB, so:
 
-- **100 tokens**: 4.5 GB × 100 = 450 GB → ~6-7 seconds
-- **1000 tokens**: 4.5 GB × 1000 = 4.5 TB → ~60-75 seconds
-- **10000 tokens**: 4.5 GB × 10000 = 45 TB → ~10+ minutes
+- **100 tokens**: 4.5 GB × 100 = 450 GB → ~3-4 seconds
+- **1000 tokens**: 4.5 GB × 1000 = 4.5 TB → ~35-45 seconds
+- **10000 tokens**: 4.5 GB × 10000 = 45 TB → ~6-8 minutes
 
 Token generation is faster (one token at a time), but large prompt processing is
 the bottleneck. This is a hardware limitation, not a software issue.
