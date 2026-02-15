@@ -2,4 +2,4 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 source "$SCRIPT_DIR/../env.sh"
-exec "$HOME/Applications/llama.cpp/build/bin/llama-bench" "$@"
+exec "$SCRIPT_DIR/../ipex-llm/llama-bench" "$@"

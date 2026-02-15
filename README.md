@@ -1,7 +1,12 @@
 # llama-intel
 
 One-command setup for running [llama.cpp](https://github.com/ggml-org/llama.cpp)
-on Intel Arc iGPUs (Arrow Lake) with SYCL.
+on Intel Arc iGPUs (Arrow Lake) using
+[ipex-llm](https://github.com/ipex-llm/ipex-llm)'s optimized SYCL backend.
+
+ipex-llm ships custom Xe SYCL kernels (ESIMD linear, XMX-accelerated attention,
+optimized MUL_MAT) that are **~2x faster** than upstream llama.cpp SYCL on Intel
+GPUs.
 
 ## Hardware
 
@@ -12,50 +17,23 @@ on Intel Arc iGPUs (Arrow Lake) with SYCL.
 
 ## Prerequisites
 
-- [Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html) (`icx`, `icpx` compilers)
-- `cmake`, `git`
+- [Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html) (runtime libraries: `libsycl`, `libmkl`, `libsvml`)
+- `curl`
 - `~/.local/bin` in your `PATH`
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/dushyantsutharsl/llama-intel.git ~/Projects/llama-intel
+git clone https://github.com/dushyant30suthar/llama-intel.git ~/Projects/llama-intel
 cd ~/Projects/llama-intel
 bash setup.sh
 ```
 
 This will:
-1. Clone llama.cpp to `~/Applications/llama.cpp`
-2. Build with SYCL + Intel GPU support
-3. Symlink `llama-serve`, `llama-chat`, `llama-bench` into `~/.local/bin/`
+1. Download the ipex-llm portable zip (~123 MB) with pre-built, optimized binaries
+2. Symlink `llama-serve`, `llama-chat`, `llama-bench` into `~/.local/bin/`
 
-## Build
-
-To rebuild after a `git pull` in llama.cpp:
-
-```bash
-bash build.sh
-```
-
-For a clean rebuild, delete the build directory first:
-
-```bash
-rm -rf ~/Applications/llama.cpp/build
-bash build.sh
-```
-
-### Build Flags
-
-The Intel compiler (`icpx`) doesn't auto-detect CPU features like GCC does,
-even with `GGML_NATIVE=ON`. The build explicitly enables:
-
-| Flag | Purpose |
-|------|---------|
-| `GGML_SYCL=ON` | SYCL backend for Intel GPU |
-| `GGML_AVX2=ON` | AVX2 instructions |
-| `GGML_FMA=ON` | Fused multiply-add |
-| `GGML_F16C=ON` | Half-precision float conversion |
-| `GGML_AVX_VNNI=ON` | Vector Neural Network Instructions |
+No cmake, no compiling — just download and run.
 
 ## Usage
 
@@ -96,21 +74,35 @@ curl http://localhost:8080/v1/chat/completions \
 | `-hf repo:quant` | Download model from HuggingFace |
 | `-t N` | CPU threads (default: auto) |
 
+## Why ipex-llm over upstream llama.cpp SYCL?
+
+Benchmarks on Intel Arc B580 (7B Q4_K_M model):
+
+| Metric | Upstream SYCL | ipex-llm SYCL | Speedup |
+|--------|---------------|---------------|---------|
+| Prompt processing (pp512) | 877 tok/s | 2336 tok/s | **2.7x** |
+| Token generation (tg128) | 36 tok/s | 66 tok/s | **1.8x** |
+
+The speed comes from custom SYCL kernels that use Intel ESIMD extensions and
+XMX matrix engines — code that is not open-source and not in upstream llama.cpp.
+
 ## Environment Variables
 
 Set by `env.sh` (sourced automatically by the launchers):
 
 | Variable | Value | Why |
 |----------|-------|-----|
-| `SYCL_CACHE_PERSISTENT` | `0` | `=1` segfaults with oneAPI 2025.3 (`PersistentDeviceCodeCache` bug) |
-| `ZES_ENABLE_SYSMAN` | `1` | Enables GPU memory queries (broken on xe driver + Level Zero 1.26, but set anyway) |
+| `SYCL_CACHE_PERSISTENT` | `1` | Cache JIT-compiled kernels (first run is slow, subsequent runs are fast) |
+| `SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS` | `1` | Lower GPU submission latency |
+| `ZES_ENABLE_SYSMAN` | `1` | Enables GPU memory queries |
 | `UR_L0_ENABLE_RELAXED_ALLOCATION_LIMITS` | `1` | Allow single GPU allocations >4 GB |
 | `ONEAPI_DEVICE_SELECTOR` | `level_zero:0` | Select the integrated Arc GPU |
 | `LLAMA_CACHE` | `~/.cache/llama.cpp` | Default model download directory |
 
 ## Models
 
-Stored in `~/.cache/llama.cpp/`:
+Stored in `~/.cache/llama.cpp/`. Any GGUF model works — download from
+[HuggingFace](https://huggingface.co/models?library=gguf) or use the `-hf` flag.
 
 | Model | Size | Notes |
 |-------|------|-------|
@@ -123,7 +115,21 @@ Stored in `~/.cache/llama.cpp/`:
 | Qwen3-VL-4B-Instruct-Q4_K_M | 3.2 GB | Vision-language |
 | LFM2.5-1.2B-Instruct-Q8_0 | 1.2 GB | Tiny, fast testing |
 
+## Updating
+
+To update to a newer ipex-llm release:
+
+```bash
+rm -rf ~/Projects/llama-intel/ipex-llm
+bash setup.sh
+```
+
+Or edit `IPEX_VERSION` in `setup.sh` to pin a specific build.
+
 ## Known Issues
+
+- **First run is slow (1-3 minutes):** SYCL JIT compiles kernels for your GPU.
+  Subsequent runs use the persistent cache and start in seconds.
 
 - **`ext_intel_free_memory` warnings:** `ZES_ENABLE_SYSMAN` doesn't work with
   Level Zero 1.26 + xe kernel driver. llama.cpp falls back to reporting total
@@ -133,9 +139,13 @@ Stored in `~/.cache/llama.cpp/`:
 - **Flash Attention disabled on SYCL:** "Flash Attention tensor is assigned to
   device CPU" — expected on the current SYCL backend for this architecture.
 
-- **oneAPI setvars.sh required:** Without it, binaries fail with
+- **oneAPI runtime required:** Without it, binaries fail with
   `libsvml.so: cannot open shared object file`. The launchers handle this
-  automatically.
+  automatically via `env.sh`.
+
+- **ipex-llm is community-maintained:** The original Intel repo was archived
+  Jan 2026. The [community fork](https://github.com/ipex-llm/ipex-llm)
+  continues to publish builds.
 
 ## Troubleshooting
 
@@ -145,13 +155,12 @@ source `env.sh` automatically, or run `source /opt/intel/oneapi/setvars.sh`
 manually.
 
 **Segfault on startup**
-Check that `SYCL_CACHE_PERSISTENT=0` is set. The persistent cache has a known
-bug in oneAPI 2025.3.
-
-**Build fails with "icx: command not found"**
-Install the Intel oneAPI Base Toolkit and ensure `setvars.sh` has been sourced
-before building.
+Try deleting the SYCL cache: `rm -rf ~/.cache/sycl_cache` and run again.
 
 **GPU not detected / "no devices found"**
 Verify `ONEAPI_DEVICE_SELECTOR=level_zero:0` is set and that the xe kernel
 driver is loaded (`lsmod | grep xe`).
+
+**Model fails to load**
+Ensure the model uses a supported quantization type (Q4_0, Q4_1, Q8_0, Q4_K,
+Q5_K, Q6_K). IQ-series quantizations are not supported by ipex-llm.

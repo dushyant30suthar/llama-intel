@@ -3,8 +3,11 @@
 
 source /opt/intel/oneapi/setvars.sh 2>/dev/null || true
 
-# Disable persistent SYCL cache (segfaults with oneAPI 2025.3)
-export SYCL_CACHE_PERSISTENT=0
+# Enable persistent SYCL cache (ipex-llm handles the oneAPI bug)
+export SYCL_CACHE_PERSISTENT=1
+
+# Use immediate command lists for lower GPU submission latency
+export SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
 
 # Enable GPU memory queries (sysman interface)
 export ZES_ENABLE_SYSMAN=1
