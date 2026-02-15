@@ -153,43 +153,43 @@ The launcher currently applies `templates/qwen3-coder.jinja` by default. To
 use a different model without a custom template, run `llama-server-bin`
 directly or edit `bin/llama-serve`.
 
-## Performance expectations
+## Benchmarks (tested on this hardware)
 
-### Why iGPU is slow on large prompts
+All benchmarks run with ipex-llm SYCL backend, `-ngl 99`, 4 threads.
 
-The iGPU shares LPDDR5x-8400 with the CPU. Max memory bandwidth is ~134 GB/s,
-but effective bandwidth is lower due to CPU contention and access patterns. For
-each prompt token, the GPU must read the entire model weights. A 7B Q4_K_M
-model is ~4.5 GB, so:
+### llama-bench results
 
-- **100 tokens**: 4.5 GB × 100 = 450 GB → ~3-4 seconds
-- **1000 tokens**: 4.5 GB × 1000 = 4.5 TB → ~35-45 seconds
-- **10000 tokens**: 4.5 GB × 10000 = 45 TB → ~6-8 minutes
+| Model | Size | pp512 (tok/s) | pp2048 (tok/s) | tg128 (tok/s) |
+|-------|------|--------------|----------------|--------------|
+| **Qwen2.5-Coder-7B Q4_K_M** | 4.4 GB | **279** | **233** | **10.4** |
+| **Qwen3-Coder-30B-A3B Q4_K_M** (MoE) | 17.4 GB | **107** | **89** | **16.6** |
 
-Token generation is faster (one token at a time), but large prompt processing is
-the bottleneck. This is a hardware limitation, not a software issue.
+### Real-world test: 6730-token prompt + 243 token response
 
-### Model size recommendations for iGPU
+| Model | Total time | Prompt eval | Generation |
+|-------|-----------|-------------|------------|
+| Qwen2.5-Coder-7B | **100s** | ~29s (233 tok/s) | ~23s (10.4 tok/s) |
 
-| Use case | Model size | Prompt speed | Generation speed |
-|----------|-----------|-------------|-----------------|
-| Coding agent (opencode) | 1-4B | Usable | ~30-40 tok/s |
-| Interactive chat | 7-8B | Slow on long prompts | ~15-25 tok/s |
-| Casual chat | 14-30B | Very slow | ~5-15 tok/s |
+### Key observations
 
-For agent/tool use where prompts are 10k+ tokens, **smaller models are faster
-end-to-end** even if they're less capable per token.
+- **30B MoE generates 60% faster than 7B** (16.6 vs 10.4 tok/s) because only
+  ~3B params are active per token. But prompt processing is 2.5x slower because
+  all 17.4 GB weights must still be read.
+- **7B is better for agent use** (opencode) where prompts are large (10k+ tokens).
+  Prompt processing dominates total latency.
+- **30B MoE is better for interactive chat** with short prompts — faster
+  generation, much smarter responses.
+- **iGPU memory bandwidth (~134 GB/s) is the bottleneck.** Prompt processing
+  speed is roughly `bandwidth / model_size`: 134 GB/s ÷ 4.4 GB ≈ 30 tok/s per
+  layer pass, which aligns with the measured ~233-279 tok/s for the 7B model.
 
-### ipex-llm vs upstream SYCL
+### Which model to use?
 
-Benchmarks on Intel Arc B580 (7B Q4_K_M):
-
-| Metric | Upstream SYCL | ipex-llm SYCL | Speedup |
-|--------|--------------|--------------|---------|
-| Prompt (pp512) | 877 tok/s | 2336 tok/s | **2.7x** |
-| Generation (tg128) | 36 tok/s | 66 tok/s | **1.8x** |
-
-iGPU numbers will be lower (shared memory), but the relative speedup holds.
+| Use case | Recommended model | Why |
+|----------|------------------|-----|
+| **Coding agent (opencode)** | Qwen2.5-Coder-7B | Fast prompts, workable generation |
+| **Interactive chat** | Qwen3-Coder-30B-A3B | Faster generation, smarter |
+| **Quick testing** | LFM2.5-1.2B | Fast but limited quality |
 
 ## Environment variables
 
