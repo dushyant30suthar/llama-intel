@@ -1,7 +1,19 @@
 # llama-intel environment variables
 # Source this file before running llama.cpp binaries with SYCL on Intel Arc GPU
 
-source /opt/intel/oneapi/setvars.sh 2>/dev/null || true
+IPEX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/ipex-llm"
+
+# Save positional params — setvars.sh reads "$@" from the calling script
+_llama_args=("$@")
+set --
+set +e
+source /opt/intel/oneapi/setvars.sh &>/dev/null
+set -e
+set -- "${_llama_args[@]}"
+unset _llama_args
+
+# ipex-llm bundled libraries (libggml-sycl.so, libllama.so, etc.)
+export LD_LIBRARY_PATH="${IPEX_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # Enable persistent SYCL cache (ipex-llm handles the oneAPI bug)
 export SYCL_CACHE_PERSISTENT=1
